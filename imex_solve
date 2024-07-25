@@ -1,0 +1,61 @@
+import numpy as np
+import scipy.sparse as sp
+import scipy.sparse.linalg as spla
+
+# Constants
+c = 3e8  # Speed of light in vacuum (m/s)
+epsilon_0 = 8.85e-12  # Permittivity of free space (F/m)
+mu_0 = 1.26e-6  # Permeability of free space (H/m)
+
+# Simulation parameters
+nx = 1000  # Number of spatial points
+dx = 1e-6  # Spatial step (m)
+dt = dx / (2 * c)  # Time step (s)
+nt = 2000  # Number of time steps
+
+# Initialize fields
+E = np.zeros(nx)
+B = np.zeros(nx)
+J = np.zeros(nx)
+
+# Initial conditions: A Gaussian pulse in the middle of the domain
+E[int(nx/2)] = 1.0
+
+# Curl operator matrix (finite difference approximation)
+def curl_operator(nx, dx):
+    C = sp.lil_matrix((nx, nx))
+    for i in range(nx):
+        if i > 0:
+            C[i, i-1] = -1 / dx
+        if i < nx - 1:
+            C[i, i+1] = 1 / dx
+    return C.tocsr()
+
+# Matrix representing the update step
+C = curl_operator(nx, dx)
+I = sp.eye(nx)
+
+# Left-hand side matrix for the implicit update of B
+A = I + (dt**2 * c**2 / dx**2) * (C @ C)
+
+# Perform the update
+for t in range(nt):
+    # Right-hand side vector for B
+    b = B - dt * C @ E
+
+    # Solve for B (implicit update)
+    B = spla.spsolve(A, b)
+
+    # Update E (explicit update)
+    E = E + dt * (c**2 * C @ B - J / epsilon_0)
+
+# Plot the results
+import matplotlib.pyplot as plt
+plt.figure(figsize=(10, 6))
+plt.plot(E, label='Electric Field E')
+plt.plot(B, label='Magnetic Field B')
+plt.xlabel('Spatial Index')
+plt.ylabel('Field Amplitude')
+plt.legend()
+plt.title('Electromagnetic Wave Propagation in Plasma')
+plt.show()
