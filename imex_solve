@@ -1,25 +1,35 @@
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
+import matplotlib.pyplot as plt
 
-# Constants
-c = 3e8  # Speed of light in vacuum (m/s)
-epsilon_0 = 8.85e-12  # Permittivity of free space (F/m)
-mu_0 = 1.26e-6  # Permeability of free space (H/m)
+# Constants for non-dimensionalization
+eta = 1e-3  # Resistivity (Ohm * m)
+ne = 1e19  # Electron density (m^-3)
+e = 1.6e-19  # Elementary charge (C)
+me = 9.11e-31  # Electron mass (kg)
 
-# Simulation parameters
-nx = 1000  # Number of spatial points
-dx = 1e-6  # Spatial step (m)
-dt = dx / (2 * c)  # Time step (s)
-nt = 2000  # Number of time steps
+# Non-dimensional parameters
+eta_prime = eta  # Non-dimensional resistivity
+ne_prime = ne  # Non-dimensional electron density
+me_prime = me / (ne * e**2)  # Non-dimensional electron mass
 
-# Initialize fields
+# Simulation parameters (non-dimensional)
+nx = 200  # Number of spatial points
+dx = 1.0 / nx  # Spatial step (non-dimensional)
+dt = 0.1  # Time step (non-dimensional), increased for under-resolution
+nt = 400  # Number of time steps
+
+# Initialize fields (non-dimensional)
 E = np.zeros(nx)
 B = np.zeros(nx)
 J = np.zeros(nx)
+J_prev = np.zeros(nx)  # Store previous J for electron inertia term
 
-# Initial conditions: A Gaussian pulse in the middle of the domain
-E[int(nx/2)] = 1.0
+# Initial conditions: Sinusoidal wave in the middle of the domain
+wavelength = nx // 10  # Make the wavelength smaller relative to the domain
+E = np.sin(2 * np.pi * np.arange(nx) / wavelength)
+B = np.sin(2 * np.pi * np.arange(nx) / wavelength)
 
 # Curl operator matrix (finite difference approximation)
 def curl_operator(nx, dx):
@@ -29,33 +39,51 @@ def curl_operator(nx, dx):
             C[i, i-1] = -1 / dx
         if i < nx - 1:
             C[i, i+1] = 1 / dx
+    C[0, -1] = -1 / dx  # Periodic boundary condition
+    C[-1, 0] = 1 / dx   # Periodic boundary condition
     return C.tocsr()
 
 # Matrix representing the update step
 C = curl_operator(nx, dx)
 I = sp.eye(nx)
 
-# Left-hand side matrix for the implicit update of B
-A = I + (dt**2 * c**2 / dx**2) * (C @ C)
+# Left-hand side matrix for the implicit update of E and B
+A_EB = I + (dt**2 / dx**2) * (C @ C)
+
+# Left-hand side matrix for the implicit update of J (including electron inertia)
+A_J = I + (dt * eta_prime) * I + (dt * me_prime) * I
 
 # Perform the update
 for t in range(nt):
     # Right-hand side vector for B
-    b = B - dt * C @ E
+    b_B = B - dt * C @ E
 
     # Solve for B (implicit update)
-    B = spla.spsolve(A, b)
+    B = spla.spsolve(A_EB, b_B)
 
-    # Update E (explicit update)
-    E = E + dt * (c**2 * C @ B - J / epsilon_0)
+    # Right-hand side vector for J
+    b_J = J + dt * E
 
-# Plot the results
-import matplotlib.pyplot as plt
-plt.figure(figsize=(10, 6))
-plt.plot(E, label='Electric Field E')
-plt.plot(B, label='Magnetic Field B')
-plt.xlabel('Spatial Index')
-plt.ylabel('Field Amplitude')
-plt.legend()
-plt.title('Electromagnetic Wave Propagation in Plasma')
-plt.show()
+    # Solve for J (implicit update)
+    J = spla.spsolve(A_J, b_J)
+
+    # Update E (semi-implicit update using extended Ohm's law)
+    E = spla.spsolve(A_EB, E + dt * (eta_prime * J + (J[:, None] * B[None, :]).sum(axis=1) + me_prime * (J - J_prev) / dt))
+
+    # Periodic boundary conditions
+    E[0] = E[-1]
+    B[0] = B[-1]
+    J[0] = J[-1]
+
+    # Store the previous current density for the next time step
+    J_prev = J.copy()
+
+    # Plot the results
+    plt.figure(figsize=(14, 8))
+    plt.plot(E, label='Electric Field E')
+    plt.plot(B, label='Magnetic Field B')
+    plt.xlabel('Spatial Index')
+    plt.ylabel('Field Amplitude')
+    plt.legend()
+    plt.title('Non-dimensional Electromagnetic Wave Propagation in Plasma (Under-resolved)')
+    plt.show()
